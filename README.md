@@ -1,4 +1,4 @@
-# Election Simulator
+# Gitman's Political Simulator
 
 Runs state-level election simulations (Florida, New York) and shows:
 
@@ -33,9 +33,13 @@ npm install
 npm run dev
 ```
 
-Open **http://localhost:5173**. Use the **Florida | New York** tabs to switch states; click **Run simulation** to re-run. Enable **Presidential** to run both states at once and see an Electoral College result (FL 30 + NY 28 EVs).
+Open **http://localhost:5173**. Use the **State** dropdown to switch between Florida and New York, then click **Run simulation** to re-run. Enable **Presidential** mode to run both states at once and see an Electoral College result (FL 30 + NY 28 EVs).
 
 The backend loads state counties from `shapefiles/<state>/` first, then Census TIGER if needed. If load fails (404/SSL), put a county shapefile in `shapefiles/florida/` (see Shapefiles folder below).
+
+## Disclaimer
+
+This simulator is for exploration only. Results are randomized and not intended to represent real election outcomes or official forecasts.
 
 ---
 
