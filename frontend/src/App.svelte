@@ -3,7 +3,7 @@
   import L from 'leaflet';
   import 'leaflet/dist/leaflet.css';
 
-  const API = '';
+  const API = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
   const MAP_CENTERS = { florida: [28.5, -82.5], new_york: [43.0, -75.5] };
 
   let mapContainer = $state(null);
@@ -136,7 +136,7 @@
     const p = props || {};
     return `<div class="tooltip-popup">
       <strong>${p.name || 'County'}</strong><br/>
-      ${dName}: ${(p.gitman_pct ?? 0).toFixed(1)}% (${(p.gitman_votes ?? 0).toLocaleString()})<br/>
+      ${dName}: ${(p.democrat_pct ?? 0).toFixed(1)}% (${(p.democrat_votes ?? 0).toLocaleString()})<br/>
       ${rName}: ${(p.rep_pct ?? 0).toFixed(1)}% (${(p.rep_votes ?? 0).toLocaleString()})<br/>
       Other: ${(p.other_pct ?? 0).toFixed(1)}% (${(p.other_votes ?? 0).toLocaleString()})<br/>
       <strong>Winner: ${p.winner ?? '—'}</strong>

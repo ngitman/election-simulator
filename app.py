@@ -45,16 +45,16 @@ def build_bar_chart_axes(fig: Figure, gdf: gpd.GeoDataFrame, republican: str) ->
     ax.clear()
     totals = get_state_totals(gdf, democrat_name=DEMOCRAT_NAME, republican=republican)
     cast = totals["Cast_Ballots"]
-    gitman = int(totals[DEMOCRAT_NAME])
+    dem_votes = int(totals[DEMOCRAT_NAME])
     rep = int(totals[republican])
     other = int(totals["Other"])
-    two_party = gitman + rep
+    two_party = dem_votes + rep
 
     # Classic electoral: one row, back-to-back bar (Democrat left, Republican right from center)
     y_center = 0.5
     bar_height = 0.35
-    max_side = max(gitman, rep)
-    ax.barh(y_center, gitman, height=bar_height, left=-gitman, color="#1a5fb4", edgecolor="white", linewidth=0.8)
+    max_side = max(dem_votes, rep)
+    ax.barh(y_center, dem_votes, height=bar_height, left=-dem_votes, color="#1a5fb4", edgecolor="white", linewidth=0.8)
     ax.barh(y_center, rep, height=bar_height, left=0, color="#c01c28", edgecolor="white", linewidth=0.8)
     ax.axvline(0, color="black", linewidth=0.8)
     ax.set_yticks([y_center])
@@ -63,9 +63,9 @@ def build_bar_chart_axes(fig: Figure, gdf: gpd.GeoDataFrame, republican: str) ->
     ax.set_xlabel("Votes", fontsize=10)
     ax.set_title("Statewide vote totals (side-by-side)", fontsize=12)
     # Vote labels at bar ends
-    pct_g = (gitman / cast * 100) if cast else 0
+    pct_g = (dem_votes / cast * 100) if cast else 0
     pct_r = (rep / cast * 100) if cast else 0
-    ax.text(-gitman - max_side * 0.02, y_center, f"{gitman:,} ({pct_g:.1f}%)", va="center", ha="right", fontsize=9)
+    ax.text(-dem_votes - max_side * 0.02, y_center, f"{dem_votes:,} ({pct_g:.1f}%)", va="center", ha="right", fontsize=9)
     ax.text(rep + max_side * 0.02, y_center, f"{rep:,} ({pct_r:.1f}%)", va="center", ha="left", fontsize=9)
     # Other votes in subtitle
     ax.text(0.5, -0.25, f"Other: {other:,} ({other/cast*100:.1f}%)  |  Total cast: {cast:,}", transform=ax.transAxes, ha="center", fontsize=9, color="gray")

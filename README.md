@@ -37,6 +37,57 @@ Open **http://localhost:5173**. Use the **State** dropdown to switch between Flo
 
 The backend loads state counties from `shapefiles/<state>/` first, then Census TIGER if needed. If load fails (404/SSL), put a county shapefile in `shapefiles/florida/` (see Shapefiles folder below).
 
+### Render (frontend + backend managed together)
+
+This repo includes `render.yaml` to provision both services:
+
+- `election-simulator-api` (Python web service, root `backend/`)
+- `election-simulator-frontend` (static site, root `frontend/`)
+
+Deploy via Render Blueprint from the repo root. After first deploy, update these values to your actual Render domains:
+
+- `FRONTEND_ORIGINS` on backend
+- `VITE_API_BASE_URL` on frontend
+
+If you deploy backend manually, use:
+
+- **Root Directory:** `backend`
+- **Build Command:** `pip install -r requirements.txt`
+- **Start Command:** `./render_start.sh`
+
+### Docker Compose (frontend + backend together)
+
+Start both services with one command:
+
+```bash
+docker compose up --build
+```
+
+Then open:
+
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:8000`
+
+Stop:
+
+```bash
+docker compose down
+```
+
+### Render (Docker-compatible backend, optional)
+
+This repo also includes `Dockerfile.backend` if you prefer a Docker web service for backend only.
+
+### Backend Exposure Note
+
+For browser-based apps, an API used directly by the frontend is internet-reachable by design. To minimize exposure:
+
+- Restrict CORS using `FRONTEND_ORIGINS` (comma-separated origins).
+- Keep secrets server-side only (never in frontend code).
+- Add auth/rate limits if you need stronger protection.
+
+If you want a truly non-public backend, use a server-side frontend/proxy on the same private network rather than direct browser calls.
+
 ## Disclaimer
 
 This simulator is for exploration only. Results are randomized and not intended to represent real election outcomes or official forecasts.

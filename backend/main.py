@@ -5,6 +5,7 @@ Run from project root: uvicorn backend.main:app --reload
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 
 _root = Path(__file__).resolve().parent.parent
@@ -34,9 +35,13 @@ from simulation import (
 
 app = FastAPI(title="Election Simulator API")
 
+_default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+_frontend_origins_env = os.getenv("FRONTEND_ORIGINS", "")
+_frontend_origins = [o.strip() for o in _frontend_origins_env.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_frontend_origins or _default_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,7 +78,7 @@ def _gdf_to_geojson(
     names: list[str] = cache["names"]
 
     # Fast column extraction (avoids iterrows overhead)
-    gitman_votes = gdf["Gitman_Votes"].astype(int).to_numpy()
+    dem_votes = gdf["Democrat_Votes"].astype(int).to_numpy()
     rep_votes = gdf[f"{republican}_Votes"].astype(int).to_numpy()
     other_votes = gdf["Other_Votes"].astype(int).to_numpy()
     cast_ballots = gdf["Cast_Ballots"].astype(int).to_numpy()
@@ -82,7 +87,7 @@ def _gdf_to_geojson(
     winners = gdf["Winner"].to_list()
 
     margin = gdf["Margin"].astype(float).to_numpy()
-    gitman_pct = gdf["Gitman_Percentage"].astype(float).to_numpy()
+    dem_pct = gdf["Democrat_Percentage"].astype(float).to_numpy()
     rep_pct = gdf[f"{republican}_Percentage"].astype(float).to_numpy()
     other_pct = gdf["Other_Percentage"].astype(float).to_numpy()
 
@@ -98,11 +103,11 @@ def _gdf_to_geojson(
                     "color": colors[idx],
                     "winner": winners[idx],
                     "margin": float(margin[idx]),
-                    "gitman_pct": float(gitman_pct[idx]),
+                    "democrat_pct": float(dem_pct[idx]),
                     "rep_pct": float(rep_pct[idx]),
                     "other_pct": float(other_pct[idx]),
                     "cast_ballots": int(cast_ballots[idx]),
-                    "gitman_votes": int(gitman_votes[idx]),
+                    "democrat_votes": int(dem_votes[idx]),
                     "rep_votes": int(rep_votes[idx]),
                     "other_votes": int(other_votes[idx]),
                 },

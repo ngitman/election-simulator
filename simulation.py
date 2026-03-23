@@ -151,26 +151,26 @@ def run_simulation(
         )
         d_share = max(1.0, min(99.0, d_share))
 
-        gitman_votes = round(two_party_votes * (d_share / 100))
-        gitman_votes = max(0, min(two_party_votes, gitman_votes))
-        rep_votes = two_party_votes - gitman_votes
-        gdf.at[i, "Gitman_Votes"] = gitman_votes
+        dem_votes = round(two_party_votes * (d_share / 100))
+        dem_votes = max(0, min(two_party_votes, dem_votes))
+        rep_votes = two_party_votes - dem_votes
+        gdf.at[i, "Democrat_Votes"] = dem_votes
         gdf.at[i, f"{republican}_Votes"] = rep_votes
 
         # ---- Percentages and margin ----
-        gitman_p = round((gitman_votes / cast_ballots_copy) * 100, 2)
+        dem_pct = round((dem_votes / cast_ballots_copy) * 100, 2)
         repub_p = round((rep_votes / cast_ballots_copy) * 100, 2)
         other_p = round((other_votes / cast_ballots_copy) * 100, 2)
-        margin = gitman_p - repub_p
-        gdf.at[i, "Gitman_Percentage"] = gitman_p
+        margin = dem_pct - repub_p
+        gdf.at[i, "Democrat_Percentage"] = dem_pct
         gdf.at[i, f"{republican}_Percentage"] = repub_p
         gdf.at[i, "Other_Percentage"] = other_p
-        gdf.at[i, "Size_Lead"] = gitman_votes - rep_votes
+        gdf.at[i, "Size_Lead"] = dem_votes - rep_votes
         gdf.at[i, "Margin"] = margin
 
         # ---- Choropleth color ----
-        if other_p > max(gitman_p, repub_p):
-            other_margin = other_p - max(gitman_p, repub_p)
+        if other_p > max(dem_pct, repub_p):
+            other_margin = other_p - max(dem_pct, repub_p)
             if other_p < 50:
                 color = "#ffdac7"
             elif other_margin < 5:
@@ -189,7 +189,7 @@ def run_simulation(
             else:
                 color = "#b80000"
         elif margin > 0:
-            if gitman_p < 50:
+            if dem_pct < 50:
                 color = "#c7dcff"
             elif abs(margin) < 5:
                 color = "#abcbff"
@@ -201,7 +201,7 @@ def run_simulation(
             color = "#ba9eff"
 
         gdf.at[i, "Color"] = color
-        gdf.at[i, "Winner"] = democrat_name if gitman_votes > rep_votes else republican
+        gdf.at[i, "Winner"] = democrat_name if dem_votes > rep_votes else republican
 
     return gdf
 
@@ -213,7 +213,7 @@ def get_state_totals(
 ) -> pd.Series:
     """Return total votes per candidate and cast ballots."""
     return pd.Series({
-        democrat_name: gdf["Gitman_Votes"].sum(),
+        democrat_name: gdf["Democrat_Votes"].sum(),
         republican: gdf[f"{republican}_Votes"].sum(),
         "Other": gdf["Other_Votes"].sum(),
         "Cast_Ballots": gdf["Cast_Ballots"].sum(),
