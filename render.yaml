@@ -9,8 +9,9 @@ services:
       - key: FRONTEND_ORIGINS
         value: https://election-simulator-frontend.onrender.com
 
-  - type: static_site
+  - type: web
     name: election-simulator-frontend
+    env: static
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
