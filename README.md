@@ -54,6 +54,9 @@ If you deploy backend manually, use:
 - **Root Directory:** `backend`
 - **Build Command:** `pip install -r requirements.txt`
 - **Start Command:** `./render_start.sh`
+- **Recommended Env Vars for low memory:**
+  - `GEOMETRY_SIMPLIFY_TOLERANCE=0.01`
+  - `GEOMETRY_COORD_PRECISION=0.0001`
 
 ### Docker Compose (frontend + backend together)
 
@@ -87,6 +90,14 @@ For browser-based apps, an API used directly by the frontend is internet-reachab
 - Add auth/rate limits if you need stronger protection.
 
 If you want a truly non-public backend, use a server-side frontend/proxy on the same private network rather than direct browser calls.
+
+### Memory optimization notes
+
+The backend now trims loaded county data to only required columns and simplifies cached map geometry.
+If you hit memory limits, increase simplification:
+
+- `GEOMETRY_SIMPLIFY_TOLERANCE=0.02` (or `0.03` for stronger reduction)
+- `GEOMETRY_COORD_PRECISION=0.0005`
 
 ## Disclaimer
 

@@ -38,6 +38,20 @@ TIGER_URLS = [
 ]
 
 
+def _trim_state_gdf(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """
+    Keep only columns required by simulation/runtime.
+    This significantly reduces memory versus retaining full TIGER attribute tables.
+    """
+    keep_cols = [c for c in ("NAME", "COUNTY", "TOT_POP22", "geometry") if c in gdf.columns]
+    gdf = gdf[keep_cols].copy()
+    if "COUNTY" not in gdf.columns and "NAME" in gdf.columns:
+        gdf["COUNTY"] = gdf["NAME"] + " County"
+    if "TOT_POP22" in gdf.columns:
+        gdf["TOT_POP22"] = pd.to_numeric(gdf["TOT_POP22"], errors="coerce").fillna(50000).astype("int32")
+    return gdf
+
+
 def find_state_shapefile(state_key: str) -> Path | None:
     """Look in shapefiles/<state_key>/ for any .shp or .zip. Returns path or None."""
     folder = SHAPEFILES_DIR / normalize_state_key(state_key)
@@ -100,7 +114,7 @@ def load_state_counties(
             if pop_col != "TOT_POP22":
                 gdf["TOT_POP22"] = gdf[pop_col]
             gdf = gdf.to_crs(epsg=3857)
-            return gdf
+            return _trim_state_gdf(gdf)
 
         gdf = gdf.merge(
             pop_df[["NAME_normalized", "population"]],
@@ -110,7 +124,7 @@ def load_state_counties(
         gdf["TOT_POP22"] = gdf["population"].fillna(50000).astype(int)
         gdf = gdf.drop(columns=["population"], errors="ignore")
         gdf = gdf.to_crs(epsg=3857)
-        return gdf
+        return _trim_state_gdf(gdf)
 
     if not use_web_fallback:
         raise FileNotFoundError(
@@ -154,7 +168,7 @@ def load_state_counties(
     if "COUNTY" not in gdf.columns:
         gdf["COUNTY"] = gdf["NAME"] + " County"
     gdf = gdf.to_crs(epsg=3857)
-    return gdf
+    return _trim_state_gdf(gdf)
 
 
 def load_florida_counties(

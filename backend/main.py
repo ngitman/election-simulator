@@ -38,6 +38,9 @@ _default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 _frontend_origins_env = os.getenv("FRONTEND_ORIGINS", "")
 _frontend_origins = [o.strip() for o in _frontend_origins_env.split(",") if o.strip()]
 _allowed_origins = {origin.rstrip("/") for origin in (_frontend_origins or _default_origins)}
+_simplify_tolerance = float(os.getenv("GEOMETRY_SIMPLIFY_TOLERANCE", "0.01"))
+_geometry_precision = float(os.getenv("GEOMETRY_COORD_PRECISION", "0.0001"))
+_max_cached_states = max(1, int(os.getenv("MAX_CACHED_STATES", "1")))
 
 _docs_enabled = os.getenv("ENABLE_API_DOCS", "").strip().lower() in {"1", "true", "yes", "on"}
 app = FastAPI(
@@ -82,6 +85,21 @@ EC_VOTES = STATE_EC_VOTES
 _base_by_state: dict[str, gpd.GeoDataFrame] = {}
 _last_by_state: dict[str, dict] = {}
 _geo_cache_by_state: dict[str, dict] = {}
+_cache_order: list[str] = []
+
+
+def _touch_state_cache(state_key: str) -> None:
+    if state_key in _cache_order:
+        _cache_order.remove(state_key)
+    _cache_order.append(state_key)
+
+
+def _enforce_cache_budget() -> None:
+    while len(_cache_order) > _max_cached_states:
+        evict = _cache_order.pop(0)
+        _base_by_state.pop(evict, None)
+        _geo_cache_by_state.pop(evict, None)
+        _last_by_state.pop(evict, None)
 
 
 def _validate_state_key(state: str) -> str:
@@ -155,6 +173,8 @@ def _ensure_loaded(state_key: str) -> gpd.GeoDataFrame:
 
             # Cache WGS84 geometry and names once per server lifetime.
             _geo_cache_by_state[state_key] = _build_geo_cache(base)
+            _touch_state_cache(state_key)
+            _enforce_cache_budget()
         except FileNotFoundError as e:
             raise HTTPException(
                 status_code=503,
@@ -163,12 +183,24 @@ def _ensure_loaded(state_key: str) -> gpd.GeoDataFrame:
                     "shapefiles_path": str(SHAPEFILES_DIR / state_key),
                 },
             )
+    else:
+        _touch_state_cache(state_key)
     return _base_by_state[state_key]
 
 
 def _build_geo_cache(base: gpd.GeoDataFrame) -> dict:
     """Build cached WGS84 geometries + names for fast GeoJSON generation."""
     gdf_wgs84 = base.to_crs(epsg=4326)
+    # Trim geometry complexity/precision for memory + payload savings in web maps.
+    if _simplify_tolerance > 0:
+        gdf_wgs84["geometry"] = gdf_wgs84.geometry.simplify(_simplify_tolerance, preserve_topology=True)
+    if _geometry_precision > 0:
+        try:
+            gdf_wgs84["geometry"] = gdf_wgs84.geometry.set_precision(_geometry_precision)
+        except Exception:
+            # Older shapely/geopandas combinations may not expose set_precision.
+            pass
+
     geoms: list[dict] = []
     names: list[str] = []
     for _, row in gdf_wgs84.iterrows():
@@ -261,6 +293,8 @@ def api_load(state: str = "florida"):
         base = base.reset_index(drop=True)
         _base_by_state[state_key] = base
         _geo_cache_by_state[state_key] = _build_geo_cache(base)
+        _touch_state_cache(state_key)
+        _enforce_cache_budget()
         return {
             "success": True,
             "state": state_key,
