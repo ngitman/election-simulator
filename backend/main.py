@@ -13,8 +13,9 @@ if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
 import geopandas as gpd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from data_loader import load_state_counties, SHAPEFILES_DIR, STATE_CONFIG
@@ -33,11 +34,18 @@ from simulation import (
     DEFAULT_UNPOPULARITY_INDEX,
 )
 
-app = FastAPI(title="Election Simulator API")
-
 _default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 _frontend_origins_env = os.getenv("FRONTEND_ORIGINS", "")
 _frontend_origins = [o.strip() for o in _frontend_origins_env.split(",") if o.strip()]
+_allowed_origins = {origin.rstrip("/") for origin in (_frontend_origins or _default_origins)}
+
+_docs_enabled = os.getenv("ENABLE_API_DOCS", "").strip().lower() in {"1", "true", "yes", "on"}
+app = FastAPI(
+    title="Election Simulator API",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,6 +54,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def restrict_api_to_allowed_origins(request: Request, call_next):
+    """
+    Browser lock-down layer:
+    only allow /api requests from configured frontend origins.
+    """
+    if request.url.path.startswith("/api/"):
+        origin = (request.headers.get("origin") or "").rstrip("/")
+        referer = request.headers.get("referer") or ""
+
+        referer_allowed = any(referer.startswith(f"{allowed}/") for allowed in _allowed_origins)
+        if origin not in _allowed_origins and not referer_allowed:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Forbidden origin"},
+            )
+
+    return await call_next(request)
+
 
 # Electoral votes for supported states (subset of 538)
 EC_VOTES = STATE_EC_VOTES
