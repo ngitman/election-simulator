@@ -99,6 +99,13 @@ If you hit memory limits, increase simplification:
 - `GEOMETRY_SIMPLIFY_TOLERANCE=0.02` (or `0.03` for stronger reduction)
 - `GEOMETRY_COORD_PRECISION=0.0005`
 
+### Backend diagnostics (Render logs)
+
+Set `LOG_LEVEL=INFO` (default) or `LOG_LEVEL=DEBUG` on the API service. Logs include **stage markers** plus **RSS snapshots** on Linux (`rss_mb` from `/proc/self/status`) and peak RSS where available, for example: `ensure_loaded_begin`, `geo_cache_to_crs_end`, `simulation_run_complete`, `geojson_build_end`.
+
+- Logger names: `election_sim.api`, `election_sim.data_loader`
+- `MemoryError` responses log at `CRITICAL` with a stack trace in server logs
+
 ## Disclaimer
 
 This simulator is for exploration only. Results are randomized and not intended to represent real election outcomes or official forecasts.

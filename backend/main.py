@@ -4,6 +4,7 @@ Run from project root: uvicorn backend.main:app --reload
 """
 from __future__ import annotations
 
+import logging
 import sys
 import os
 from pathlib import Path
@@ -18,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from observability import configure_logging, log_stage
 from data_loader import load_state_counties, SHAPEFILES_DIR, STATE_CONFIG
 from state_metadata import (
     STATE_EC_VOTES,
@@ -33,6 +35,9 @@ from simulation import (
     DEFAULT_TURNOUT,
     DEFAULT_UNPOPULARITY_INDEX,
 )
+
+configure_logging()
+logger = logging.getLogger("election_sim.api")
 
 _default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 _frontend_origins_env = os.getenv("FRONTEND_ORIGINS", "")
@@ -100,6 +105,7 @@ def _enforce_cache_budget() -> None:
         _base_by_state.pop(evict, None)
         _geo_cache_by_state.pop(evict, None)
         _last_by_state.pop(evict, None)
+        log_stage(logger, "cache_evicted", state=evict, max_cached_states=_max_cached_states)
 
 
 def _validate_state_key(state: str) -> str:
@@ -120,6 +126,7 @@ def _gdf_to_geojson(
     Geometry itself does not change during simulation, so we avoid repeated
     `to_crs()` calls and per-row geometry extraction on every request.
     """
+    log_stage(logger, "geojson_build_begin", state=state_key, rows=len(gdf))
     cache = _geo_cache_by_state[state_key]
     geoms: list[dict] = cache["geoms"]
     names: list[str] = cache["names"]
@@ -160,12 +167,14 @@ def _gdf_to_geojson(
                 },
             }
         )
+    log_stage(logger, "geojson_build_end", state=state_key, features=n)
     return {"type": "FeatureCollection", "features": features}
 
 
 def _ensure_loaded(state_key: str) -> gpd.GeoDataFrame:
     if state_key not in _base_by_state or _base_by_state[state_key] is None:
         try:
+            log_stage(logger, "ensure_loaded_begin", state=state_key)
             base = load_state_counties(state_key, use_web_fallback=True)
             # Reset index once so positional arrays align with cached geometry order.
             base = base.reset_index(drop=True)
@@ -175,7 +184,15 @@ def _ensure_loaded(state_key: str) -> gpd.GeoDataFrame:
             _geo_cache_by_state[state_key] = _build_geo_cache(base)
             _touch_state_cache(state_key)
             _enforce_cache_budget()
+            log_stage(
+                logger,
+                "ensure_loaded_end",
+                state=state_key,
+                rows=len(base),
+                geo_cache_features=len(_geo_cache_by_state[state_key]["geoms"]),
+            )
         except FileNotFoundError as e:
+            logger.exception("ensure_loaded_file_error state=%s", state_key)
             raise HTTPException(
                 status_code=503,
                 detail={
@@ -184,28 +201,34 @@ def _ensure_loaded(state_key: str) -> gpd.GeoDataFrame:
                 },
             )
     else:
+        log_stage(logger, "ensure_loaded_cache_hit", state=state_key)
         _touch_state_cache(state_key)
     return _base_by_state[state_key]
 
 
 def _build_geo_cache(base: gpd.GeoDataFrame) -> dict:
     """Build cached WGS84 geometries + names for fast GeoJSON generation."""
+    log_stage(logger, "geo_cache_to_crs_begin", rows=len(base))
     gdf_wgs84 = base.to_crs(epsg=4326)
+    log_stage(logger, "geo_cache_to_crs_end", rows=len(gdf_wgs84))
     # Trim geometry complexity/precision for memory + payload savings in web maps.
     if _simplify_tolerance > 0:
         gdf_wgs84["geometry"] = gdf_wgs84.geometry.simplify(_simplify_tolerance, preserve_topology=True)
+        log_stage(logger, "geo_cache_simplified", tolerance=_simplify_tolerance)
     if _geometry_precision > 0:
         try:
             gdf_wgs84["geometry"] = gdf_wgs84.geometry.set_precision(_geometry_precision)
+            log_stage(logger, "geo_cache_precision", precision=_geometry_precision)
         except Exception:
             # Older shapely/geopandas combinations may not expose set_precision.
-            pass
+            logger.warning("set_precision unavailable; skipping GEOMETRY_COORD_PRECISION")
 
     geoms: list[dict] = []
     names: list[str] = []
     for _, row in gdf_wgs84.iterrows():
         geoms.append(row.geometry.__geo_interface__)
         names.append(row.get("NAME") or row.get("COUNTY", ""))
+    log_stage(logger, "geo_cache_built", features=len(geoms))
     return {"geoms": geoms, "names": names}
 
 
@@ -220,6 +243,7 @@ def _run_state_simulation(
     seed: int | None,
 ) -> dict:
     """Run and cache one state's simulation result (shared by single/presidential endpoints)."""
+    log_stage(logger, "simulation_begin", state=state_key, seed=seed)
     base = _ensure_loaded(state_key)
     gdf = run_simulation(
         base.copy(),
@@ -231,6 +255,7 @@ def _run_state_simulation(
         bias_d_r=bias_d_r,
         seed=seed,
     )
+    log_stage(logger, "simulation_run_complete", state=state_key, rows=len(gdf))
     totals = get_state_totals(
         gdf,
         democrat_name=democrat_name,
@@ -254,6 +279,7 @@ def _run_state_simulation(
         "geojson": _gdf_to_geojson(gdf, state_key, democrat_name, republican_name),
     }
     _last_by_state[state_key] = payload
+    log_stage(logger, "simulation_end", state=state_key)
     return payload
 
 
@@ -289,12 +315,14 @@ def api_load(state: str = "florida"):
     """Load counties for a state. Returns success and county count or error."""
     state_key = _validate_state_key(state)
     try:
+        log_stage(logger, "api_load_begin", state=state_key)
         base = load_state_counties(state_key, use_web_fallback=True)
         base = base.reset_index(drop=True)
         _base_by_state[state_key] = base
         _geo_cache_by_state[state_key] = _build_geo_cache(base)
         _touch_state_cache(state_key)
         _enforce_cache_budget()
+        log_stage(logger, "api_load_end", state=state_key, county_count=len(_base_by_state[state_key]))
         return {
             "success": True,
             "state": state_key,
@@ -303,6 +331,7 @@ def api_load(state: str = "florida"):
             "message": f"Loaded {len(_base_by_state[state_key])} {get_state_label(state_key)} counties.",
         }
     except FileNotFoundError as e:
+        logger.warning("api_load_failed state=%s err=%s", state_key, e)
         return {
             "success": False,
             "state": state_key,
@@ -317,6 +346,7 @@ def api_simulation_run(body: RunSimulationRequest | None = None):
     """Run one state simulation. Returns state totals + GeoJSON."""
     body = body or RunSimulationRequest()
     state_key = _validate_state_key(body.state)
+    log_stage(logger, "api_sim/run", state=state_key)
     payload = _run_state_simulation(
         state_key=state_key,
         democrat_name=body.democrat_name,
@@ -351,12 +381,14 @@ class PresidentialRunRequest(BaseModel):
 def api_presidential_run(body: PresidentialRunRequest | None = None):
     """Run simulation for all supported states with the same seed; return EC outcome."""
     body = body or PresidentialRunRequest()
+    log_stage(logger, "api_presidential_begin", states=list(SUPPORTED_STATES), seed=body.seed)
     state_results = []
     ec_dem = 0
     ec_rep = 0
 
     for state_key in SUPPORTED_STATES:
         try:
+            log_stage(logger, "api_presidential_state", state=state_key)
             payload = _run_state_simulation(
                 state_key=state_key,
                 democrat_name=body.democrat_name,
@@ -366,7 +398,8 @@ def api_presidential_run(body: PresidentialRunRequest | None = None):
                 unpopularity_index=body.unpopularity_index,
                 seed=body.seed,
             )
-        except HTTPException:
+        except HTTPException as exc:
+            logger.warning("presidential_skip state=%s detail=%r", state_key, exc.detail)
             continue
         totals = payload["totals"]
         dem_v = int(totals["democrat"])
@@ -392,6 +425,7 @@ def api_presidential_run(body: PresidentialRunRequest | None = None):
     if ec_dem == ec_rep:
         national_winner = "Tie"
 
+    log_stage(logger, "api_presidential_end", states_done=len(state_results))
     return {
         "state_results": state_results,
         "electoral_college": {
@@ -404,3 +438,12 @@ def api_presidential_run(body: PresidentialRunRequest | None = None):
         "democrat_name": body.democrat_name,
         "republican_name": body.republican_name,
     }
+
+
+@app.exception_handler(MemoryError)
+async def memory_error_handler(request: Request, exc: MemoryError):
+    logger.critical("MemoryError on %s", request.url.path, exc_info=True)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Server ran out of memory; try again or reduce geometry settings."},
+    )

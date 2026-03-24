@@ -11,6 +11,8 @@
   let geoLayer = $state(null);
   let result = $state(null);
   let loading = $state(true);
+  /** Full-screen splash until first API load attempt finishes (success or error). */
+  let initialBoot = $state(true);
   let error = $state(null);
 
   let stateList = $state([
@@ -179,12 +181,12 @@
 
   onMount(async () => {
     await tick();
-    if (!mapContainer) return;
-    map = L.map(mapContainer).setView([28.5, -82.5], 6);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; OpenStreetMap, &copy; CARTO',
-    }).addTo(map);
     try {
+      if (!mapContainer) return;
+      map = L.map(mapContainer).setView([28.5, -82.5], 6);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap, &copy; CARTO',
+      }).addTo(map);
       const statesRes = await fetch(`${API}/api/states`);
       if (statesRes.ok) {
         const data = await statesRes.json();
@@ -194,6 +196,8 @@
     } catch (e) {
       error = e.message || 'Backend not reachable. Start it with: uvicorn backend.main:app --reload';
       loading = false;
+    } finally {
+      initialBoot = false;
     }
   });
 </script>
@@ -203,6 +207,22 @@
 </svelte:head>
 
 <div class="shell">
+  {#if initialBoot}
+    <div
+      class="boot-overlay"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      aria-label="Loading election simulator"
+    >
+      <div class="boot-card">
+        <div class="boot-spinner" aria-hidden="true"></div>
+        <p class="boot-title">Loading simulator</p>
+        <p class="boot-sub">Connecting to the API and running the first simulation…</p>
+      </div>
+    </div>
+  {/if}
+
   <header class="topbar">
     <div class="brand">Gitman's Political Simulator</div>
     <div class="top-actions">
@@ -369,7 +389,52 @@
 </div>
 
 <style>
-  .shell { min-height: 100vh; background: #0e0e11; color: #e6e4ef; font-family: Inter, system-ui, sans-serif; }
+  .boot-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(9, 9, 11, 0.88);
+    backdrop-filter: blur(10px);
+  }
+  .boot-card {
+    text-align: center;
+    padding: 1.75rem 2rem;
+    max-width: 22rem;
+    background: #131317;
+    border: 1px solid #2b2d34;
+    border-radius: 0.35rem;
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+  }
+  .boot-spinner {
+    width: 2.5rem;
+    height: 2.5rem;
+    margin: 0 auto 1rem;
+    border: 3px solid #2b2d34;
+    border-top-color: #adc6ff;
+    border-radius: 50%;
+    animation: boot-spin 0.75s linear infinite;
+  }
+  @keyframes boot-spin {
+    to { transform: rotate(360deg); }
+  }
+  .boot-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #e6e4ef;
+  }
+  .boot-sub {
+    margin: 0.5rem 0 0;
+    font-size: 0.78rem;
+    line-height: 1.45;
+    color: #abaab4;
+  }
+
+  .shell { min-height: 100vh; background: #0e0e11; color: #e6e4ef; font-family: Inter, system-ui, sans-serif; position: relative; }
   .topbar { height: 3rem; display: flex; align-items: center; justify-content: space-between; padding: 0 1.25rem; background: #09090b; border-bottom: 1px solid #1f2026; }
   .brand { font-size: 1rem; font-weight: 700; letter-spacing: 0.01em; }
   .top-actions { display: flex; align-items: center; gap: 0.75rem; }

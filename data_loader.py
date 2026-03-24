@@ -2,6 +2,7 @@
 Load state county geometry and ensure we have population for simulation.
 Supports: (1) local shapefile with TOT_POP22, (2) Census TIGER national file + state pop CSV.
 """
+import logging
 import os
 import ssl
 import tempfile
@@ -11,7 +12,10 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
+from observability import log_stage
 from state_metadata import STATE_FIPS, SUPPORTED_STATES, normalize_state_key
+
+_logger = logging.getLogger("election_sim.data_loader")
 
 def _make_ssl_context():
     """Build an SSL context that verifies certificates (fixes macOS CERTIFICATE_VERIFY_FAILED)."""
@@ -87,6 +91,7 @@ def load_state_counties(
     state_key = normalize_state_key(state_key)
     if state_key not in SUPPORTED_STATES:
         raise ValueError(f"Unknown state: {state_key}. Supported: {list(SUPPORTED_STATES)}")
+    log_stage(_logger, "load_counties_begin", state=state_key, shapefile=shapefile_path or "auto")
     state_fips = STATE_FIPS[state_key]
     default_pop_csv = STATE_CONFIG[state_key]
     pop_csv_path = pop_csv_path or default_pop_csv
@@ -103,6 +108,7 @@ def load_state_counties(
 
     if shapefile_path and os.path.isfile(shapefile_path):
         gdf = gpd.read_file(shapefile_path)
+        log_stage(_logger, "load_counties_read_local", state=state_key, rows=len(gdf), columns=list(gdf.columns)[:12])
         if "STATEFP" in gdf.columns:
             gdf = gdf[gdf["STATEFP"] == state_fips].copy()
         if "NAME" not in gdf.columns and "COUNTY" in gdf.columns:
@@ -114,7 +120,9 @@ def load_state_counties(
             if pop_col != "TOT_POP22":
                 gdf["TOT_POP22"] = gdf[pop_col]
             gdf = gdf.to_crs(epsg=3857)
-            return _trim_state_gdf(gdf)
+            out = _trim_state_gdf(gdf)
+            log_stage(_logger, "load_counties_local_done", state=state_key, rows=len(out))
+            return out
 
         gdf = gdf.merge(
             pop_df[["NAME_normalized", "population"]],
@@ -124,7 +132,9 @@ def load_state_counties(
         gdf["TOT_POP22"] = gdf["population"].fillna(50000).astype(int)
         gdf = gdf.drop(columns=["population"], errors="ignore")
         gdf = gdf.to_crs(epsg=3857)
-        return _trim_state_gdf(gdf)
+        out = _trim_state_gdf(gdf)
+        log_stage(_logger, "load_counties_local_merged_done", state=state_key, rows=len(out))
+        return out
 
     if not use_web_fallback:
         raise FileNotFoundError(
@@ -136,11 +146,13 @@ def load_state_counties(
     last_error = None
     for url in TIGER_URLS:
         try:
+            log_stage(_logger, "load_counties_tiger_download_begin", state=state_key, url=url)
             with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
                 with opener.open(url) as resp:
                     tmp.write(resp.read())
                 tmp_path = tmp.name
             gdf = gpd.read_file(tmp_path)
+            log_stage(_logger, "load_counties_tiger_read", state=state_key, rows=len(gdf))
             try:
                 os.unlink(tmp_path)
             except OSError:
@@ -148,6 +160,7 @@ def load_state_counties(
             last_error = None
             break
         except Exception as e:
+            _logger.warning("TIGER fetch failed state=%s url=%s err=%s", state_key, url, e)
             last_error = e
     if last_error is not None:
         raise FileNotFoundError(
@@ -157,6 +170,7 @@ def load_state_counties(
 
     if "STATEFP" in gdf.columns:
         gdf = gdf[gdf["STATEFP"] == state_fips].copy()
+        log_stage(_logger, "load_counties_tiger_filtered", state=state_key, rows=len(gdf))
     gdf["NAME_normalized"] = gdf["NAME"].apply(lambda n: _normalize_county_name(n, state_key))
     gdf = gdf.merge(
         pop_df[["NAME_normalized", "population"]],
@@ -168,7 +182,9 @@ def load_state_counties(
     if "COUNTY" not in gdf.columns:
         gdf["COUNTY"] = gdf["NAME"] + " County"
     gdf = gdf.to_crs(epsg=3857)
-    return _trim_state_gdf(gdf)
+    out = _trim_state_gdf(gdf)
+    log_stage(_logger, "load_counties_tiger_done", state=state_key, rows=len(out))
+    return out
 
 
 def load_florida_counties(
