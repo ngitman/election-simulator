@@ -12,6 +12,43 @@ import pandas as pd
 # Default simulation parameters
 DEMOCRAT_NAME = "Democrat"
 REPUBLICAN_NAME = "Republican"
+# Plurality winner label when third-party votes lead (must match API/UI).
+OTHER_PLURALITY_LABEL = "Other"
+
+
+def plurality_winner_votes(
+    dem_v: int,
+    rep_v: int,
+    other_v: int,
+    democrat_name: str,
+    republican_name: str,
+) -> str:
+    """True plurality among D, R, and other votes; ties return 'Tie'."""
+    m = max(dem_v, rep_v, other_v)
+    at_max: list[str] = []
+    if dem_v == m:
+        at_max.append(democrat_name)
+    if rep_v == m:
+        at_max.append(republican_name)
+    if other_v == m:
+        at_max.append(OTHER_PLURALITY_LABEL)
+    if len(at_max) > 1:
+        return "Tie"
+    return at_max[0]
+
+
+def major_party_winner_votes(
+    dem_v: int,
+    rep_v: int,
+    democrat_name: str,
+    republican_name: str,
+) -> str:
+    """Winner if only Democrat vs Republican ballots counted (same vote totals, ignore Other)."""
+    if dem_v > rep_v:
+        return democrat_name
+    if rep_v > dem_v:
+        return republican_name
+    return "Tie"
 
 # County categories by state (historically D-leaning, swing). Others use population-size tiers.
 STATE_LIKELY_D = {
@@ -37,6 +74,10 @@ STATE_SWING = {
 
 DEFAULT_TURNOUT = 55
 DEFAULT_UNPOPULARITY_INDEX = 0.0
+# Effective third-party % uses (scale ** 2) × baseline random share (capped), so high
+# slider values are much more dramatic while scale=1.0 matches the original model.
+DEFAULT_THIRD_PARTY_SCALE = 1.0
+THIRD_PARTY_PCT_CAP = 55.0
 
 # Simulation structure
 STATEWIDE_SWING_RANGE = 8.0   # ± points applied to all counties each run
@@ -80,6 +121,7 @@ def run_simulation(
     turnout: int = DEFAULT_TURNOUT,
     unpopularity_index: float = DEFAULT_UNPOPULARITY_INDEX,
     bias_d_r: float = 0.0,
+    third_party_scale: float = DEFAULT_THIRD_PARTY_SCALE,
     increase_urban: bool = False,
     decrease_rural: bool = False,
     pop_column: str = "TOT_POP22",
@@ -133,6 +175,12 @@ def run_simulation(
             other_pct = random.uniform(1.0, 2.5)
         else:
             other_pct = random.uniform(0.5, 2.0)
+        tps = max(0.0, float(third_party_scale))
+        if tps <= 0:
+            other_pct = 0.0
+        else:
+            # Quadratic in scale: max slider (×5) behaves like ×25 on baseline → big visible swings.
+            other_pct = min(THIRD_PARTY_PCT_CAP, other_pct * (tps * tps))
         other_votes = round(total_county_votes * (other_pct / 100))
         other_votes = min(other_votes, total_county_votes - 2)
         gdf.at[i, "Other_Votes"] = other_votes
@@ -201,7 +249,12 @@ def run_simulation(
             color = "#ba9eff"
 
         gdf.at[i, "Color"] = color
-        gdf.at[i, "Winner"] = democrat_name if dem_votes > rep_votes else republican
+        gdf.at[i, "Winner"] = plurality_winner_votes(
+            dem_votes, rep_votes, other_votes, democrat_name, republican
+        )
+        gdf.at[i, "Major_Party_Winner"] = major_party_winner_votes(
+            dem_votes, rep_votes, democrat_name, republican
+        )
 
     return gdf
 

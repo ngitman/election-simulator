@@ -17,12 +17,25 @@ Two UIs: **FastAPI + Svelte** (web) and **tkinter** (desktop).
 
 ### Run
 
-**Terminal 1 — backend:**
+**Terminal 1 — backend** (run from the **repository root**, not from `backend/`):
 
 ```bash
 cd florida_election_app
 pip install -r requirements.txt
 uvicorn backend.main:app --reload
+```
+
+If you are already inside the `backend/` folder, either:
+
+```bash
+uvicorn main:app --reload
+```
+
+Or use the helper from `backend/` (it `cd`s to repo root for you):
+
+```bash
+cd backend
+./run_dev.sh
 ```
 
 **Terminal 2 — frontend:**

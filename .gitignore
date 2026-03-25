@@ -36,3 +36,6 @@ pnpm-debug.log*
 
 # Vite cache
 frontend/.vite/
+
+# Auto-generated after first Census TIGER download (state-filtered county layer)
+shapefiles/*/tiger_counties_cache.*

@@ -17,7 +17,7 @@ import geopandas as gpd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from observability import configure_logging, log_stage
 from data_loader import load_state_counties, SHAPEFILES_DIR, STATE_CONFIG
@@ -34,6 +34,10 @@ from simulation import (
     REPUBLICAN_NAME,
     DEFAULT_TURNOUT,
     DEFAULT_UNPOPULARITY_INDEX,
+    DEFAULT_THIRD_PARTY_SCALE,
+    OTHER_PLURALITY_LABEL,
+    plurality_winner_votes,
+    major_party_winner_votes,
 )
 
 configure_logging()
@@ -139,6 +143,7 @@ def _gdf_to_geojson(
 
     colors = gdf["Color"].to_list()
     winners = gdf["Winner"].to_list()
+    major_party_winners = gdf["Major_Party_Winner"].to_list()
 
     margin = gdf["Margin"].astype(float).to_numpy()
     dem_pct = gdf["Democrat_Percentage"].astype(float).to_numpy()
@@ -156,6 +161,7 @@ def _gdf_to_geojson(
                     "name": names[idx],
                     "color": colors[idx],
                     "winner": winners[idx],
+                    "major_party_winner": major_party_winners[idx],
                     "margin": float(margin[idx]),
                     "democrat_pct": float(dem_pct[idx]),
                     "rep_pct": float(rep_pct[idx]),
@@ -195,6 +201,15 @@ def _ensure_loaded(state_key: str) -> gpd.GeoDataFrame:
             logger.exception("ensure_loaded_file_error state=%s", state_key)
             raise HTTPException(
                 status_code=503,
+                detail={
+                    "message": str(e),
+                    "shapefiles_path": str(SHAPEFILES_DIR / state_key),
+                },
+            )
+        except ValueError as e:
+            logger.warning("ensure_loaded_bad_layer state=%s err=%s", state_key, e)
+            raise HTTPException(
+                status_code=400,
                 detail={
                     "message": str(e),
                     "shapefiles_path": str(SHAPEFILES_DIR / state_key),
@@ -240,6 +255,7 @@ def _run_state_simulation(
     bias_d_r: float,
     turnout: int,
     unpopularity_index: float,
+    third_party_scale: float,
     seed: int | None,
 ) -> dict:
     """Run and cache one state's simulation result (shared by single/presidential endpoints)."""
@@ -253,6 +269,7 @@ def _run_state_simulation(
         turnout=turnout,
         unpopularity_index=unpopularity_index,
         bias_d_r=bias_d_r,
+        third_party_scale=third_party_scale,
         seed=seed,
     )
     log_stage(logger, "simulation_run_complete", state=state_key, rows=len(gdf))
@@ -263,16 +280,22 @@ def _run_state_simulation(
     )
     dem_votes = int(totals[democrat_name])
     rep_votes = int(totals[republican_name])
+    other_votes = int(totals["Other"])
     totals_dict = {
         "state": state_key,
         "state_label": get_state_label(state_key),
         "democrat": dem_votes,
         "republican": rep_votes,
-        "other": int(totals["Other"]),
+        "other": other_votes,
         "cast_ballots": int(totals["Cast_Ballots"]),
         "democrat_name": democrat_name,
         "republican_name": republican_name,
-        "winner": democrat_name if dem_votes > rep_votes else republican_name,
+        "winner": plurality_winner_votes(
+            dem_votes, rep_votes, other_votes, democrat_name, republican_name
+        ),
+        "major_party_winner": major_party_winner_votes(
+            dem_votes, rep_votes, democrat_name, republican_name
+        ),
     }
     payload = {
         "totals": totals_dict,
@@ -290,6 +313,12 @@ class RunSimulationRequest(BaseModel):
     bias_d_r: float = 0.0
     turnout: int = DEFAULT_TURNOUT
     unpopularity_index: float = DEFAULT_UNPOPULARITY_INDEX
+    third_party_scale: float = Field(
+        default=DEFAULT_THIRD_PARTY_SCALE,
+        ge=0.0,
+        le=10.0,
+        description="Strength 0–10; squared in the model (1=default, high=large third-party share).",
+    )
     seed: int | None = None
 
 
@@ -339,6 +368,15 @@ def api_load(state: str = "florida"):
             "message": str(e),
             "shapefiles_path": str(SHAPEFILES_DIR / state_key),
         }
+    except ValueError as e:
+        logger.warning("api_load_bad_layer state=%s err=%s", state_key, e)
+        return {
+            "success": False,
+            "state": state_key,
+            "countyCount": 0,
+            "message": str(e),
+            "shapefiles_path": str(SHAPEFILES_DIR / state_key),
+        }
 
 
 @app.post("/api/simulation/run", response_model=RunSimulationResponse)
@@ -354,6 +392,7 @@ def api_simulation_run(body: RunSimulationRequest | None = None):
         bias_d_r=body.bias_d_r,
         turnout=body.turnout,
         unpopularity_index=body.unpopularity_index,
+        third_party_scale=body.third_party_scale,
         seed=body.seed,
     )
     return RunSimulationResponse(**payload)
@@ -374,6 +413,11 @@ class PresidentialRunRequest(BaseModel):
     bias_d_r: float = 0.0
     turnout: int = DEFAULT_TURNOUT
     unpopularity_index: float = DEFAULT_UNPOPULARITY_INDEX
+    third_party_scale: float = Field(
+        default=DEFAULT_THIRD_PARTY_SCALE,
+        ge=0.0,
+        le=10.0,
+    )
     seed: int | None = None
 
 
@@ -385,6 +429,7 @@ def api_presidential_run(body: PresidentialRunRequest | None = None):
     state_results = []
     ec_dem = 0
     ec_rep = 0
+    ec_other = 0
 
     for state_key in SUPPORTED_STATES:
         try:
@@ -396,6 +441,7 @@ def api_presidential_run(body: PresidentialRunRequest | None = None):
                 bias_d_r=body.bias_d_r,
                 turnout=body.turnout,
                 unpopularity_index=body.unpopularity_index,
+                third_party_scale=body.third_party_scale,
                 seed=body.seed,
             )
         except HTTPException as exc:
@@ -405,25 +451,29 @@ def api_presidential_run(body: PresidentialRunRequest | None = None):
         dem_v = int(totals["democrat"])
         rep_v = int(totals["republican"])
         winner = totals["winner"]
+        major_party_winner = totals["major_party_winner"]
         ec = EC_VOTES.get(state_key, 0)
-        if dem_v > rep_v:
+        if winner == body.democrat_name:
             ec_dem += ec
-        else:
+        elif winner == body.republican_name:
             ec_rep += ec
+        elif winner == OTHER_PLURALITY_LABEL:
+            ec_other += ec
         state_results.append({
             "state": state_key,
             "label": get_state_label(state_key),
             "democrat": dem_v,
             "republican": rep_v,
             "winner": winner,
+            "major_party_winner": major_party_winner,
             "ec_votes": ec,
         })
 
-    total_ec = ec_dem + ec_rep
-    majority = (total_ec // 2) + 1
-    national_winner = body.democrat_name if ec_dem > ec_rep else body.republican_name
-    if ec_dem == ec_rep:
-        national_winner = "Tie"
+    total_ec = ec_dem + ec_rep + ec_other
+    majority = (total_ec // 2) + 1 if total_ec else 0
+    national_winner = plurality_winner_votes(
+        ec_dem, ec_rep, ec_other, body.democrat_name, body.republican_name
+    )
 
     log_stage(logger, "api_presidential_end", states_done=len(state_results))
     return {
@@ -431,6 +481,7 @@ def api_presidential_run(body: PresidentialRunRequest | None = None):
         "electoral_college": {
             "democrat": ec_dem,
             "republican": ec_rep,
+            "other": ec_other,
             "total": total_ec,
             "majority": majority,
             "winner": national_winner,
